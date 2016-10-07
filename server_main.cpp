@@ -8,275 +8,163 @@
 #include "common_thread.h"
 #include <mutex>
 #include "common_paradas.h"
+#include "common_proxyClient.h"
 #include <thread>
 #include <vector>
-#define RESPUESTACA 0
-#define RESPUESTACF 2 
-#define RESPUESTACL 3 
-#define RESPUETACR 4 
-#define RESPUESTAERROR 255
+#include <utility>
 
-using namespace std;
+#define RESPUESTACA 0x00
+#define RESPUESTACF 0x02 
+#define RESPUESTACL 0x03 
+#define RESPUETACR 0x04 
+#define RESPUESTAERROR 0xFF
 
-uint32_t recibirUint32_t(Socket* socket){
-	char buff[5];
-	bzero(buff,5);
 
-	socket->receive(buff,sizeof(buff)-1);
-
-	uint32_t cs = 0;
-
-	memcpy ( &cs, buff, sizeof(cs) );
-
-	return ntohl(cs);
-}
-
-void enviarUint32_t(Socket* socket, uint32_t entero){
-
-	uint32_t ui = htonl(entero);
-
-	char buff[5];
-
-	memcpy ( buff, &ui, sizeof(buff)-1 );
-
-	socket->send(buff,sizeof(buff)-1);
-}
-void enviarByte(Socket* socket, uint32_t respuesta ){
-		char buff[1];
-		memcpy(buff,&respuesta,1);
-		socket->send(buff,1);
-}
-
-/*void procesarCliente(Socket&& socket, Paradas& paradas){
-
-	char comando;
-	while ( socket.receive(&comando,sizeof(comando)) > 0){
-		
-		std::cerr << "Comando " << comando << " recibido." << std::endl;
-
-		uint32_t unixTime = recibirUint32_t(socket);
-
-		switch (comando){
-			case 'A':{
-				uint32_t numLinea = recibirUint32_t(socket);
-				if (paradas.agregarPartidaBondi(numLinea,unixTime) == 0){
-					enviarByte(socket, 0x00);
-					enviarUint32_t(socket,numLinea);
-				} else {
-					enviarByte(socket, 0xFF);
-				}
-				break;
-			}
-			case 'F':{
-				uint32_t numLinea = recibirUint32_t(socket);
-				uint32_t numParada = recibirUint32_t(socket);
-				int cuantoFalta = paradas.cuantoFaltaParaLlegar(unixTime, numLinea, numParada);
-				
-				if (cuantoFalta>=0){
-					enviarByte(socket, 0x02);
-					enviarUint32_t(socket,cuantoFalta);
-				} else {
-					enviarByte(socket,0xFF);
-				}
-				break;
-			}
-			case 'L':{
-				uint32_t paradaUno,paradaDos;
-				paradaUno = recibirUint32_t(socket);
-				paradaDos = recibirUint32_t(socket);
-				std::pair<size_t,size_t> mejorBondi = paradas.bondiMasRapido(paradaUno,paradaDos);
-				
-				enviarByte(socket,0x03);
-				enviarUint32_t(socket,mejorBondi.first);
-				enviarUint32_t(socket,mejorBondi.second);
-				break;
-			}
-			case 'R':{
-
-				uint32_t paradaUno=recibirUint32_t(socket);
-				uint32_t paradaDos=recibirUint32_t(socket);
-				std::pair<size_t,size_t> bondiTiempo = paradas.bondiRecomendado(unixTime,paradaUno,paradaDos);
-				enviarByte(socket,0x04);
-				enviarUint32_t(socket,bondiTiempo.first);
-				enviarUint32_t(socket,bondiTiempo.second);
-				break;
-			}
-		}
-	}
-}*/ 	
-
-class manejadorCliente : public Thread {
+class  manejadorCliente : public Thread {
 private:
-	Socket* socket;
+	ProxyClient proxyClient;
 	Paradas& paradas;
 
 public:
-	manejadorCliente(Socket* socket, Paradas& paradas) : socket(socket),paradas(paradas){
-		
-	}
+	manejadorCliente(ProxyClient&& proxyClient, Paradas& paradas) : 
+			proxyClient(std::move(proxyClient)), paradas(paradas) {}
 
 	virtual void run(){
-		cerr << "Cliente conectado." << endl;
-		char comando;
-		
-		while ( socket->receive(&comando,sizeof(comando)) > 0){
-			
-			std::cerr << "Comando " << comando << " recibido." << std::endl;
+		std::cerr << "Cliente conectado." << std::endl;
+		int comando;
+	
+		while ( (comando = proxyClient.recibir(sizeof(char))) > 0 ){		
+			std::cerr << "Comando " << (char)comando << " recibido." << std::endl;
 
-			uint32_t unixTime = recibirUint32_t(socket);
+			uint32_t unixTime = proxyClient.recibir(sizeof(uint32_t));
 
 			switch (comando){
 				case 'A':{
-					uint32_t numLinea = recibirUint32_t(socket);
+					uint32_t numLinea = proxyClient.recibir(sizeof(uint32_t));
 					if (paradas.agregarPartidaBondi(numLinea,unixTime) == 0){
-						enviarByte(socket, 0x00);
-						enviarUint32_t(socket,numLinea);
+						proxyClient.enviar(RESPUESTACA,sizeof(char));
+						proxyClient.enviar(numLinea,sizeof(uint32_t));
 					} else {
-						enviarByte(socket, 0xFF);
+						proxyClient.enviar(RESPUESTAERROR,sizeof(char));
 					}
 					break;
 				}
 				case 'F':{
-					uint32_t numLinea = recibirUint32_t(socket);
-					uint32_t numParada = recibirUint32_t(socket);
-					int cuantoFalta = paradas.cuantoFaltaParaLlegar(unixTime, numLinea, numParada);
+					uint32_t numLinea = proxyClient.recibir(sizeof(uint32_t));
+					uint32_t numParada = proxyClient.recibir(sizeof(uint32_t));
+
+					int cuantoFalta = paradas.cuantoFaltaParaLlegar
+										(unixTime, numLinea, numParada);
 					
 					if (cuantoFalta>=0){
-						enviarByte(socket, 0x02);
-						enviarUint32_t(socket,cuantoFalta);
+						proxyClient.enviar(RESPUESTACF,sizeof(char));
+						proxyClient.enviar(cuantoFalta,sizeof(uint32_t));
+
 					} else {
-						enviarByte(socket,0xFF);
+						proxyClient.enviar(RESPUESTAERROR,sizeof(char));
 					}
 					break;
 				}
 				case 'L':{
 					uint32_t paradaUno,paradaDos;
-					paradaUno = recibirUint32_t(socket);
-					paradaDos = recibirUint32_t(socket);
-					std::pair<size_t,size_t> mejorBondi = paradas.bondiMasRapido(paradaUno,paradaDos);
-					
-					enviarByte(socket,0x03);
-					enviarUint32_t(socket,mejorBondi.first);
-					enviarUint32_t(socket,mejorBondi.second);
+					paradaUno = proxyClient.recibir(sizeof(uint32_t));
+					paradaDos = proxyClient.recibir(sizeof(uint32_t));
+					std::pair<size_t,size_t> mejorBondi; 
+					mejorBondi = paradas.bondiMasRapido(paradaUno,paradaDos);
+					proxyClient.enviar(RESPUESTACL, sizeof(char));
+					proxyClient.enviar(mejorBondi.first, sizeof(uint32_t));
+					proxyClient.enviar(mejorBondi.second, sizeof(uint32_t));
 					break;
 				}
 				case 'R':{
-
-					uint32_t paradaUno=recibirUint32_t(socket);
-					uint32_t paradaDos=recibirUint32_t(socket);
-					std::pair<size_t,size_t> bondiTiempo = paradas.bondiRecomendado(unixTime,paradaUno,paradaDos);
-					enviarByte(socket,0x04);
-					enviarUint32_t(socket,bondiTiempo.first);
-					enviarUint32_t(socket,bondiTiempo.second);
+				    uint32_t paradaUno,paradaDos;
+					paradaUno = proxyClient.recibir(sizeof(uint32_t));
+					paradaDos = proxyClient.recibir(sizeof(uint32_t));
+					std::pair<size_t,size_t> mejorBondi;
+					mejorBondi = paradas.bondiRecomendado(unixTime,paradaUno,paradaDos);
+					proxyClient.enviar(RESPUETACR, sizeof(char));
+					proxyClient.enviar(mejorBondi.first, sizeof(uint32_t));
+					proxyClient.enviar(mejorBondi.second, sizeof(uint32_t));
 					break;
 				}
 			}
 		}
-		socket->shutdown();
-		delete socket;
-		cerr << "Cliente desconectado." << endl;
+		proxyClient.cerrarConexion();
+		std::cerr << "Cliente desconectado." << std::endl;
 	}
-
 };
 
 class espearaQ :  public Thread{ 
     private:
-    	Socket& skt;
+    	ProxyClient& proxyClient;
 
     public:
-        espearaQ(Socket& skt) : skt(skt){}
+        explicit espearaQ(ProxyClient& proxyClient) : proxyClient(proxyClient){}
         
 		virtual void run() {
-            string quit;
+            std::string quit;
             for (;;){
-				    
-				cin >> quit;
+				std::cin >> quit;
             	if (quit == "q"){
-            		skt.shutdown();
+            		proxyClient.cerrarConexion();
             		return;
             	}
             }
         }
 };
 
-class hola :  public Thread{ 
+class aceptadorClientes :  public Thread{ 
     private:
-    	Socket& skt;
+    	ProxyClient& proxyClient;
     	Paradas& paradas;
+    
     public:
-        hola(Socket& skt, Paradas& paradas): skt(skt), paradas(paradas) {}
+        aceptadorClientes(ProxyClient& proxyClient, Paradas& paradas) :
+         	proxyClient(proxyClient), paradas(paradas) {}
         
 		virtual void run() {            
 			std::vector<Thread*> threads;
-		    //Socket socket;
-			for (;;){
-				Socket* socket = skt.accept();
-					
-				if (socket->invalido()){
-					delete socket;
+			ProxyClient proxyClientAceptado;
+			while (proxyClient.hayConexion()){
+				try {
+					proxyClientAceptado = proxyClient.aceptarCliente();
+				}
+				catch	(const std::exception &e){
 					break;
 				}
-
-				//cerr << "Cliente conectado." << endl;
-
-				Thread* th = new manejadorCliente(socket,paradas);
-
+				Thread* th = new manejadorCliente(std::move(proxyClientAceptado),paradas);
 				th->start();
-
-				//th -> join();
 				threads.push_back(th);
-
-				//procesarCliente(socket,paradas);
-
-				//cerr << "Cliente desconectado." << endl;		
-				
-				//socket.shutdown();
-				
 			}
-			
-			/*for(unsigned int i=0; i < threads.size(); i++){
-				threads[i]->start();
-			}*/
 
 			for(unsigned int i=0; i < threads.size(); i++){
 				threads[i]->join();
-
 				delete threads[i];
 			}
 		}
 };
 
-/*std::thread aceptar_un_cliente(Socket &aceptador) {
-	Socket skt_cliente = aceptador.accept();
-	// copia de un socket, error!
-	// std::thread t {manejador_del_cliente,
-	// skt_cliente};
-	// movimiento de un socket, todo ok
-	std::thread t {manejador_del_cliente, std::move(skt_cliente)};
-	return t; // movemos el hilo, no hay copia
-}*/
-
 int main(int argc, char *argv[]) {
+	if (argc < 4){
+		std::cout << "Faltan argumentos" << std::endl;
+		return 0;
+	}
 
-	Paradas paradas;
+	Paradas paradas(argv[2], argv[3]);
 
     std::vector<Thread*> threads;
-  
-	Socket skt;
 
-	skt.bindAndListen(8080);
+	ProxyClient proxyClient(atoi(argv[1]));
 
-    threads.push_back(new espearaQ(skt));
+    threads.push_back(new espearaQ(proxyClient));
 
-	threads.push_back(new hola(skt,paradas));
+	threads.push_back(new aceptadorClientes(proxyClient,paradas));
 
-    for (int i=0; i <= 1; i++){
-
+    for (size_t i=0; i < threads.size(); i++){
     	threads[i]->start();
 	}
 
-    for (int i=0; i <= 1; i++){
-
+    for (size_t i=0; i < threads.size(); i++){
     	threads[i]->join();
 		delete threads[i];
 	}

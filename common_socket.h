@@ -11,26 +11,20 @@ public:
 	Socket();
 	int bindAndListen(unsigned short port);
 	int connect(const char* host_name, unsigned short port);
-	Socket* accept();
+	Socket accept();
 	int send(const char* buffer, size_t length);
 	int receive(char* buffer, size_t length);
 	void shutdown();
 	bool invalido();
 	~Socket();
 
-	Socket(Socket&& other) {
-		this->skt = std::move(other.skt);
-	}
+	Socket(Socket&& other);
 
-	Socket& operator=(Socket&& other) {
-		this->skt = std::move(other.skt);
-		return *this;
-	}
+	Socket& operator=(Socket&& other);
 	
 private:
 	Socket(const Socket&) = delete;
 	Socket& operator=(const Socket&) = delete;
-
 };
 
 #endif

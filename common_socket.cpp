@@ -13,7 +13,6 @@
 
 #include "common_socket.h"
 
-
 #define CANT_MAX_CLIENT 5
 #define PAQ_SOBRANTE_LEN 100
 #define ERROR_DE_CONEXION -1
@@ -23,7 +22,6 @@ Socket::Socket(){
     this -> skt = socket(AF_INET, SOCK_STREAM, 0);
     if (this -> skt == -1){
     	throw -1;
-    	//throw OSError("no se pudo crear");
     }
     int val = 1,sktAux = this->skt;
     int s = setsockopt(sktAux, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
@@ -33,11 +31,22 @@ Socket::Socket(){
 }
 
 Socket::~Socket(){
-	/*if (this -> skt >= 0){
+	if (this -> skt >= 0){
 		close(this->skt);
-	}*/
-	std::cout << "socket destruido" << std::endl;
+	}
 }
+
+Socket::Socket(Socket&& other) {
+	this->skt = std::move(other.skt);
+	other.skt = -1;
+}
+
+Socket& Socket::operator=(Socket&& other) {
+	this->skt = std::move(other.skt);
+	other.skt = -1;
+	return *this;
+}
+
 
 int Socket::bindAndListen(unsigned short port){
 	struct sockaddr_in serv_addr;
@@ -68,23 +77,14 @@ int Socket::connect(const char* host_name, unsigned short port){
 	return SIN_ERRORES;
 }
 
-Socket* Socket::accept(){
-	//Socket* socket = new Socket();
-	//socket->skt = ::accept(this->skt,nullptr, nullptr);
-	//Socket socket;
-	//socket.skt = ::accept(this->skt,nullptr, nullptr);
-	//return std::move(socket);
-	//int skt_fd = ::accept(this->skt,nullptr, nullptr);
-	Socket* accepted = new Socket();
-	accepted->skt = ::accept(this->skt,nullptr, nullptr);
-	return accepted;
-}
-
-/*Socket Socket::accept(){
+Socket Socket::accept(){
 	Socket accepted;
 	accepted.skt = ::accept(this->skt,nullptr, nullptr);
+	if (accepted.invalido()){
+		throw std::exception();
+	}
 	return accepted;
-}*/
+}
 
 
 int Socket::send(const char* buffer, size_t length){
@@ -122,9 +122,9 @@ int Socket::receive(char* buffer, size_t length){
    while (received < length && is_the_socket_valid) {
    		s = recv(this->skt,&buffer[received], length-received, MSG_NOSIGNAL);
       
-    	if (s == 0) { // nos cerraron el socket :(
+    	if (s == 0) { 
          	is_the_socket_valid = false;
-      	} else if (s < 0) { // hubo un error >(
+      	} else if (s < 0) { 
          	is_the_socket_valid = false;
       	} else {
          	received += s;
@@ -139,9 +139,9 @@ int Socket::receive(char* buffer, size_t length){
 }
 
 void Socket::shutdown(){
-	::shutdown(this -> skt, SHUT_RDWR);
+	this -> skt = ::shutdown(this -> skt, SHUT_RDWR);
 }
 
 bool Socket::invalido(){
-	return (this->skt < 0);
+	return (this->skt <= 0);
 }

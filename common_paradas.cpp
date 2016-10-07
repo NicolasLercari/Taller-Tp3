@@ -11,12 +11,14 @@
 #include <list>
 
 #include <utility>  
-#include <algorithm>  
+#include <string>
 
+#include "common_grafo.h"
 #include "common_paradas.h"
+#include "common_buscador.h"
 
-Paradas::Paradas(){
-	std::ifstream archParadas("paradas.txt");
+Paradas::Paradas(char* nombreArchParadas, char* nombreArchBondis){
+	std::ifstream archParadas(nombreArchParadas);
 
     for (std::string line; std::getline(archParadas, line);) {
 		size_t verticeInicial,verticeFinal,tiempo;
@@ -24,16 +26,10 @@ Paradas::Paradas(){
 		iss >> std::noskipws;
 		iss >> verticeInicial >> std::ws >> verticeFinal >> std::ws >> tiempo;
 				
-		if (paradas.find( verticeInicial ) == paradas.end()){
-			std::map<size_t,size_t> ady;
-	   		ady.insert(std::pair<size_t,size_t>(verticeFinal,tiempo));
-		   	paradas.insert(std::pair<size_t,std::map<size_t,size_t> >(verticeInicial,ady));		
-		} else {
-			paradas[verticeInicial].insert(std::pair<size_t,size_t>(verticeFinal,tiempo));
-		} 
+		grafoParadas.agregarArista(verticeInicial, verticeFinal, tiempo);		
     }
 
-	std::ifstream archBondis("bondis.txt");
+	std::ifstream archBondis(nombreArchBondis);
 
     for (std::string line; std::getline(archBondis, line);) {
 		size_t bondi;
@@ -44,7 +40,7 @@ Paradas::Paradas(){
 		std::list<size_t> listParadas;
 		for(int parada ; iss >> std::ws >> parada;){
 			listParadas.push_back(parada);
-			if (paradasPorBondi.find( parada ) == paradasPorBondi.end()){
+			if (paradasPorBondi.find(parada) == paradasPorBondi.end()){
 				std::list<size_t> lista;
 				lista.push_back(bondi);	
 				paradasPorBondi.insert(std::pair<size_t, std::list<size_t> >(parada,lista));
@@ -52,97 +48,84 @@ Paradas::Paradas(){
 				paradasPorBondi[parada].push_back(bondi);
 			}
 		}
-		recorridosBondis.insert(std::pair<size_t, std::list<size_t> >(bondi,listParadas));
+		recorridosBondis.insert(std::pair<size_t, std::list<size_t> >
+												(bondi,listParadas));
 		std::list<size_t> lista;
 		bondisHorarios.insert(std::pair<size_t, std::list<size_t> >(bondi,lista));
     }
 }
 
-// HARDCODEADO la parada inicial
-int Paradas::cuantoFaltaParaLlegar(size_t unixTimeAct, size_t bondi, size_t parada){
-
-	if (bondisHorarios.find( bondi ) != bondisHorarios.end()){
-		// si la parada destino no es valida, no pertence a las paradas del bondi
+int Paradas::cuantoFaltaParaLlegar(size_t unixTimeAct, 
+											size_t bondi, size_t parada){
+	if (bondisHorarios.find(bondi) != bondisHorarios.end()){
 		std::list<size_t> lParadas = recorridosBondis[bondi];
-		if ( std::find(lParadas.begin(), lParadas.end(), parada) == lParadas.end()){
+		// si la parada destino no es valida, no pertence a las paradas del bondi
+		// es un error contemplado.
+		if (Buscador::find(lParadas.begin(), lParadas.end(), parada) == 
+															lParadas.end()){
 			return -1;
 		}
 		size_t paradaInicial = recorridosBondis[bondi].front();
-		size_t bondiTarda = cuantoTarda(bondi,paradaInicial,parada);
+		int bondiTarda = cuantoTarda(bondi,paradaInicial,parada);
+		if (bondiTarda < 0) return -1;
+		m.lock();
 		std::list<size_t> partidas = bondisHorarios[bondi];
 
 		for (auto const &partida : partidas){
 			int cuantoFalta = partida + bondiTarda - unixTimeAct;
 			if (cuantoFalta >= 0){
+				m.unlock();
 				return cuantoFalta;
 			}
     	}
+    	m.unlock();
 	}
 	return -1;
 }
 
 int Paradas::agregarPartidaBondi(size_t bondi,size_t unixTime){
-	m.lock();
-	if (bondisHorarios.find( bondi ) != bondisHorarios.end()){
+	if (bondisHorarios.find(bondi) != bondisHorarios.end()){
+		m.lock();
 		bondisHorarios[bondi].push_back(unixTime);
 		m.unlock();
 		return 0;
 	}
-	m.unlock();
 	return -1;
 }
 
-// modificar con la agregacion de recorridosBondis
 size_t Paradas::cuantoTarda(size_t bondi,size_t paradaUno, size_t paradaDos){
-	/*std::map<size_t,size_t> adyacentes = paradas[paradaUno];
-	std::map<size_t,size_t>::iterator it=adyacentes.begin();
-	size_t tarda = 0;
-
-	while ( it!=adyacentes.end() ){
-		std::list<size_t> bondis;
-		bondis = paradasPorBondi[it->first];
-		if (std::find(bondis.begin(), bondis.end(), bondi) != bondis.end()){
-			tarda += it->second;
-			if (paradas.find(it->first) == paradas.end()){
-				break;
-			}
-			adyacentes = paradas[it->first];
-			it = adyacentes.begin();
-			continue;
-		}
-		++it;
-	}*/
-	//std::list<size_t>::iterator parada=recorridosBondis[bondi].begin();
 	std::list<size_t> listaParadas = recorridosBondis[bondi];
-	std::list<size_t>::iterator parada = std::find(listaParadas.begin(),listaParadas.end(),paradaUno);
-	size_t tarda=0;
-	while (parada != listaParadas.end() && (*parada != paradaDos)){
-		// obtengo el peso de la arista
-		std::map<size_t,size_t> ady = paradas[*parada];
-		parada++;
-		tarda += ady[*parada];
-	}
-	return tarda;
+	return grafoParadas.obtenerPesoCaminoDesdeHasta
+									(listaParadas, paradaUno, paradaDos);
 }
 
-std::pair<size_t, size_t> Paradas::bondiRecomendado(size_t unixTime, size_t paradaUno, size_t paradaDos){
-	std::list<size_t> lParadaUno = paradasPorBondi[paradaUno];
-	std::list<size_t> lParadaDos = paradasPorBondi[paradaDos];
-
-	// BUSCO LOS ELEMENTOS EN COMUN ENTRE lparadauno y lparados
+std::list<size_t> intersepcion(std::list<size_t> listaUno, 
+												std::list<size_t> listaDos){
 	std::map<size_t,size_t> intersepcion;
 	std::list<size_t> lIntersepcion;
-	for (std::list<size_t>::iterator it=lParadaUno.begin(); it != lParadaUno.end(); ++it){
+	for (std::list<size_t>::iterator it=listaUno.begin(); 
+												it != listaUno.end(); ++it){
 		intersepcion.insert(std::pair<size_t,size_t>(*it,1));
 	}
-	for (std::list<size_t>::iterator it=lParadaDos.begin(); it != lParadaDos.end(); ++it){
+	for (std::list<size_t>::iterator it=listaDos.begin(); 
+												it != listaDos.end(); ++it){
 		if (intersepcion.find(*it) != intersepcion.end()){
 			lIntersepcion.push_back(*it);
 		}
 	}
+	return lIntersepcion;
+}
+
+std::pair<size_t, size_t> Paradas::bondiRecomendado(size_t unixTime, 
+											size_t paradaUno, size_t paradaDos){
+	std::list<size_t> lParadaUno = paradasPorBondi[paradaUno];
+	std::list<size_t> lParadaDos = paradasPorBondi[paradaDos];
+
+	std::list<size_t> lIntersepcion = intersepcion(lParadaUno,lParadaDos);
+
 	size_t bondi = lIntersepcion.front();
-  	size_t cuantoFalta = cuantoFaltaParaLlegar(unixTime, bondi, paradaUno);
-  	size_t bondiCuantoTarda = cuantoTarda(bondi, paradaUno, paradaDos);
+  	int cuantoFalta = cuantoFaltaParaLlegar(unixTime, bondi, paradaUno);
+  	int bondiCuantoTarda = cuantoTarda(bondi, paradaUno, paradaDos);
 	size_t bondiRecomendado = bondi;
 	size_t menorTiempo = cuantoFalta + bondiCuantoTarda;
 
@@ -150,8 +133,10 @@ std::pair<size_t, size_t> Paradas::bondiRecomendado(size_t unixTime, size_t para
 	  	int falta = cuantoFaltaParaLlegar(unixTime, bondi, paradaUno);
 	  	if (falta < 0) continue;
 	  	
-	  	size_t tarda = cuantoTarda(bondi, paradaUno, paradaDos);
-	  	//if (tarda < 0) return std::pair<size_t,size_t>(0,0);
+	  	int tarda = cuantoTarda(bondi, paradaUno, paradaDos);
+	  	// si fallo el es un error devuelvo un valor 
+	  	// invalido en bondi
+	  	if (tarda < 0) return std::pair<size_t,size_t>(0,0);
 
 	  	size_t tiempo = falta + tarda;
 
@@ -164,29 +149,22 @@ std::pair<size_t, size_t> Paradas::bondiRecomendado(size_t unixTime, size_t para
 }
 
 
-
-std::pair<size_t,size_t> Paradas::bondiMasRapido(size_t paradaUno,size_t paradaDos){
+std::pair<size_t,size_t> Paradas::bondiMasRapido
+											(size_t paradaUno,size_t paradaDos){
 	std::list<size_t> lParadaUno = paradasPorBondi[paradaUno];
 	std::list<size_t> lParadaDos = paradasPorBondi[paradaDos];
 
-	// BUSCO LOS ELEMENTOS EN COMUN ENTRE lparadauno y lparados
-	std::map<size_t,size_t> intersepcion;
-	std::list<size_t> lIntersepcion;
-	for (std::list<size_t>::iterator it=lParadaUno.begin(); it != lParadaUno.end(); ++it){
-		intersepcion.insert(std::pair<size_t,size_t>(*it,1));
-	}
-	for (std::list<size_t>::iterator it=lParadaDos.begin(); it != lParadaDos.end(); ++it){
-		if (intersepcion.find(*it) != intersepcion.end()){
-			lIntersepcion.push_back(*it);
-		}
-	}
+	std::list<size_t> lIntersepcion = intersepcion(lParadaUno,lParadaDos);
 
   	std::list<size_t>::iterator it=lIntersepcion.begin();
   	size_t bondiMenorTiempo = *it;
-  	size_t menorTiempo = cuantoTarda(*it,paradaUno,paradaDos);
-
-  	for (std::list<size_t>::iterator it=lIntersepcion.begin(); it != lIntersepcion.end(); ++it){
-		size_t tarda = cuantoTarda(*it,paradaUno,paradaDos);
+  	int menorTiempo = cuantoTarda(*it,paradaUno,paradaDos);
+  	for (std::list<size_t>::iterator it=lIntersepcion.begin(); 
+  										it != lIntersepcion.end(); ++it){
+		int tarda = cuantoTarda(*it,paradaUno,paradaDos);
+	  	// si fallo el es un error devuelvo un valor 
+	  	// invalido en bondi (0 en este caso)
+	  	if (tarda < 0) return std::pair<size_t,size_t>(0,0);
 		if (tarda < menorTiempo){
 			menorTiempo = tarda;
 			bondiMenorTiempo = *it;
@@ -195,7 +173,6 @@ std::pair<size_t,size_t> Paradas::bondiMasRapido(size_t paradaUno,size_t paradaD
 	return std::pair<size_t,size_t>(bondiMenorTiempo,menorTiempo);
 }
 
-Paradas::~Paradas(){
 
-}
 
+Paradas::~Paradas(){}
